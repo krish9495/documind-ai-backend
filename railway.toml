@@ -1,5 +1,6 @@
 [build]
-builder = "NIXPACKS"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/health"
@@ -11,3 +12,5 @@ restartPolicyMaxRetries = 10
 PORT = "8000"
 HOST = "0.0.0.0"
 RELOAD = "false"
+PYTHONUNBUFFERED = "1"
+PYTHONDONTWRITEBYTECODE = "1"

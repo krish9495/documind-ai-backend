@@ -1,0 +1,37 @@
+# DocuMind AI - Lightweight Railway-optimized dependencies
+# Core FastAPI dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+pydantic>=2.0.0,<3.0.0
+
+# Google AI (essential)
+google-generativeai==0.3.2
+requests==2.31.0
+
+# Lightweight data processing
+numpy>=1.24.0,<1.26.0
+pandas>=1.5.0,<2.0.0
+
+# Minimal LangChain (only core components)
+langchain-core>=0.1.0,<0.2.0
+langchain-google-genai>=0.0.5,<1.0.0
+langchain-text-splitters>=0.0.1,<1.0.0
+
+# Document processing (lightweight)
+PyPDF2>=3.0.0,<4.0.0
+python-docx>=0.8.11,<1.0.0
+
+# Lightweight vector store
+faiss-cpu>=1.7.4,<1.8.0
+
+# Essential text processing only
+tiktoken>=0.5.0,<1.0.0
+
+# System monitoring (lightweight)
+psutil>=5.9.0,<6.0.0
+
+# Utilities
+tqdm>=4.66.0,<5.0.0
+typing-extensions>=4.8.0,<5.0.0

@@ -1,13 +1,87 @@
-﻿__pycache__
-*.pyc
-*.pyo
-*.pyd
+﻿# Build optimization for Railway
+
+# Python cache and build artifacts
+
+**pycache**
+_.pyc
+_.pyo
+_.pyd
 .Python
 .pytest_cache
 .coverage
+_.egg-info/
+build/
+dist/
+
+# Git and version control
+
 .git
 .gitignore
+.github/
+
+# Documentation files
+
 README.md
-Dockerfile
-.dockerignore
-*.md
+\*.md
+
+# Development files
+
+.vscode/
+.idea/
+_.swp
+_.swo
+\*~
+
+# Environment files
+
+.env
+.env.local
+.env.\*.local
+
+# Large sample files (exclude from build, download at runtime if needed)
+
+uploads/_.pdf
+uploads/_.docx
+uploads/_.txt
+BAJHLIP23020V012223.pdf
+Arogya_.pdf
+policy.pdf
+
+# Vector store data (will be regenerated at runtime)
+
+vector_store/faiss_index/
+vector_store/_.faiss
+vector_store/_.pkl
+
+# Logs
+
+\*.log
+logs/
+
+# OS generated files
+
+.DS*Store
+.DS_Store?
+.*\*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+
+_.tmp
+_.temp
+temp/
+tmp/
+
+# Alternative deployment configs
+
+fly.toml
+vercel.json
+nixpacks.toml
+
+# Large model cache directories that can be downloaded at runtime
+
+.cache/
+\*.cache/

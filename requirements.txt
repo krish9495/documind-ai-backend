@@ -1,36 +1,39 @@
-﻿# DocuMind AI - Python 3.11 Compatible Requirements
+﻿# DocuMind AI - Railway Optimized Requirements
 # Core FastAPI dependencies
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 python-dotenv==1.0.0
-pydantic>=2.0.0
+pydantic>=2.0.0,<3.0.0
 
 # Google AI and core API
 google-generativeai==0.3.2
 requests==2.31.0
 
-# Data processing (Python 3.11 compatible)
-numpy>=1.24.0,<2.0.0
-pandas>=1.5.0,<3.0.0
+# Data processing (lightweight versions)
+numpy>=1.24.0,<1.26.0
+pandas>=1.5.0,<2.2.0
 
-# LangChain ecosystem (stable versions for Python 3.11)
+# LangChain ecosystem (optimized versions)
 langchain>=0.1.0,<0.2.0
-langchain-community>=0.0.10,<1.0.0
-langchain-google-genai>=0.0.5,<1.0.0
-langchain-text-splitters>=0.0.1,<1.0.0
+langchain-community>=0.0.10,<0.1.0
+langchain-google-genai>=0.0.5,<0.1.0
+langchain-text-splitters>=0.0.1,<0.1.0
 
 # Document processing
 PyPDF2>=3.0.0,<4.0.0
 python-docx>=0.8.11,<1.0.0
 
-# Vector stores (Python 3.11 compatible)
-faiss-cpu>=1.7.4,<2.0.0
-sentence-transformers>=2.2.2,<3.0.0
+# Vector stores (CPU-only, lighter)
+faiss-cpu==1.7.4
+sentence-transformers>=2.2.2,<2.5.0
 
 # Text processing
-tiktoken>=0.5.0,<1.0.0
+tiktoken>=0.5.0,<0.6.0
 
 # Utilities
 tqdm>=4.66.0,<5.0.0
 typing-extensions>=4.8.0,<5.0.0
+
+# System monitoring (lightweight)
+psutil>=5.9.0,<6.0.0
