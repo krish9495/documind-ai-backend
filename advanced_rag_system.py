@@ -14,6 +14,8 @@ Features:
 import os
 import json
 import asyncio
+import requests
+import tempfile
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 from pathlib import Path
@@ -129,8 +131,52 @@ class DocumentProcessor:
         return UnstructuredEmailLoader(path).load()
     
     def _load_url(self, url: str):
-        """Load document from URL"""
-        return UnstructuredURLLoader([url]).load()
+        """Load document from URL by downloading first"""
+        import requests
+        import tempfile
+        
+        try:
+            # Download the file
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            # Determine file type from content-type or URL
+            content_type = response.headers.get('content-type', '').lower()
+            if 'pdf' in content_type or url.lower().endswith('.pdf'):
+                suffix = '.pdf'
+            elif 'docx' in content_type or url.lower().endswith('.docx'):
+                suffix = '.docx'
+            elif 'doc' in content_type or url.lower().endswith('.doc'):
+                suffix = '.doc'
+            else:
+                # Default to PDF for unknown types
+                suffix = '.pdf'
+            
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+                tmp_file.write(response.content)
+                temp_path = tmp_file.name
+            
+            # Process the downloaded file
+            if suffix == '.pdf':
+                documents = self._load_pdf(temp_path)
+            elif suffix in ['.docx', '.doc']:
+                documents = self._load_docx(temp_path)
+            else:
+                documents = self._load_pdf(temp_path)  # fallback
+            
+            # Cleanup temporary file
+            import os
+            try:
+                os.unlink(temp_path)
+            except:
+                pass  # Ignore cleanup errors
+                
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Error downloading/processing URL {url}: {str(e)}")
+            raise
     
     async def process_document(self, document_path: str) -> List[Any]:
         """Process document based on type"""
