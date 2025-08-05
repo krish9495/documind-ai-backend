@@ -1,4 +1,4 @@
-﻿# DocuMind AI - Python 3.13 Compatible Requirements
+﻿# DocuMind AI - Python 3.11 Compatible Requirements
 # Core FastAPI dependencies
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
@@ -10,27 +10,27 @@ pydantic>=2.0.0
 google-generativeai==0.3.2
 requests==2.31.0
 
-# Data processing (Python 3.13 compatible)
-numpy>=1.26.0
-pandas>=2.1.0
+# Data processing (Python 3.11 compatible)
+numpy>=1.24.0,<2.0.0
+pandas>=1.5.0,<3.0.0
 
-# LangChain ecosystem (latest versions for Python 3.13)
-langchain>=0.1.0
-langchain-community>=0.0.10
-langchain-google-genai>=0.0.5
-langchain-text-splitters>=0.0.1
+# LangChain ecosystem (stable versions for Python 3.11)
+langchain>=0.1.0,<0.2.0
+langchain-community>=0.0.10,<1.0.0
+langchain-google-genai>=0.0.5,<1.0.0
+langchain-text-splitters>=0.0.1,<1.0.0
 
 # Document processing
-PyPDF2>=3.0.0
-python-docx>=0.8.11
+PyPDF2>=3.0.0,<4.0.0
+python-docx>=0.8.11,<1.0.0
 
-# Vector stores (Python 3.13 compatible)
-faiss-cpu>=1.7.4
-sentence-transformers>=2.2.2
+# Vector stores (Python 3.11 compatible)
+faiss-cpu>=1.7.4,<2.0.0
+sentence-transformers>=2.2.2,<3.0.0
 
 # Text processing
-tiktoken>=0.5.0
+tiktoken>=0.5.0,<1.0.0
 
 # Utilities
-tqdm>=4.66.0
-typing-extensions>=4.8.0
+tqdm>=4.66.0,<5.0.0
+typing-extensions>=4.8.0,<5.0.0
