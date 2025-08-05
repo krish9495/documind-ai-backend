@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies
 WORKDIR /app
 COPY requirements.txt .
+
+# Install CPU-only PyTorch first to avoid CUDA dependencies
+RUN pip install --no-cache-dir --user torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Production stage
@@ -38,6 +43,7 @@ USER app
 
 # Add local packages to PATH
 ENV PATH=/home/app/.local/bin:$PATH
+ENV PYTHONPATH=/app
 
 # Expose port
 EXPOSE 8000

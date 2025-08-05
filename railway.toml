@@ -1,10 +1,11 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
+buildCommand = "docker build --build-arg BUILDKIT_INLINE_CACHE=1 ."
 
 [deploy]
 healthcheckPath = "/health"
-healthcheckTimeout = 100
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
@@ -14,3 +15,4 @@ HOST = "0.0.0.0"
 RELOAD = "false"
 PYTHONUNBUFFERED = "1"
 PYTHONDONTWRITEBYTECODE = "1"
+PIP_NO_CACHE_DIR = "1"
