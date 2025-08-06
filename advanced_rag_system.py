@@ -228,7 +228,7 @@ class AdvancedEmbeddingManager:
 class IntelligentChunker:
     """Intelligent document chunking with context preservation"""
     
-    def __init__(self, chunk_size: int = 2200, chunk_overlap: int = 50):
+    def __init__(self, chunk_size: int = 3500, chunk_overlap: int = 50):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         
@@ -414,7 +414,7 @@ class AdvancedRAGSystem:
                 model="gemini-1.5-flash",  # Fast but high-quality model
                 google_api_key=api_key,
                 temperature=0.1,
-                max_output_tokens=2048,  # Keep quality output length
+                max_output_tokens=1024,  # Lower output tokens for faster response
                 top_p=0.8,
                 top_k=40,  # Keep quality parameters
                 timeout=60,  # Reasonable timeout
@@ -424,44 +424,54 @@ class AdvancedRAGSystem:
         return self.llm
     
     async def process_documents(self, document_paths: Union[str, List[str]]) -> Any:
-        """Process multiple documents efficiently with smart caching"""
+        """Process multiple documents efficiently with smart caching and async download"""
         if isinstance(document_paths, str):
             document_paths = [document_paths]
-        
+
         # Create cache key for document set
         cache_key = "|".join(sorted(document_paths))
-        
+
         # Check if we already processed these documents
         if cache_key in self.vector_store_cache:
             logger.info("Using cached vector store for faster processing")
             return self.vector_store_cache[cache_key]
-        
-        all_documents = []
-        for doc_path in document_paths:
+
+        async def process_one(doc_path):
             try:
+                # Always await the async process_document method
                 documents = await self.document_processor.process_document(doc_path)
-                all_documents.extend(documents)
+                return documents
             except Exception as e:
                 logger.error(f"Failed to process {doc_path}: {str(e)}")
-                continue
-        
+                return []
+
+        # Run all document processing tasks concurrently
+        tasks = [asyncio.create_task(process_one(doc_path)) for doc_path in document_paths]
+        results = await asyncio.gather(*tasks)
+
+        # Flatten results and filter out failures
+        all_documents = []
+        for docs in results:
+            if docs:
+                all_documents.extend(docs)
+
         if not all_documents:
             raise ValueError("No documents could be processed successfully")
-        
+
         # Create intelligent chunks
         chunks = self.chunker.create_chunks(all_documents)
-        
+
         # Initialize embeddings
         embeddings = self.embedding_manager.initialize()
-        
+
         # Try to load existing vector store, create if not found
         vector_store = self.vector_store_manager.load_vector_store(embeddings)
         if vector_store is None:
             vector_store = self.vector_store_manager.create_vector_store(chunks, embeddings)
-        
+
         # Cache the vector store for future use
         self.vector_store_cache[cache_key] = vector_store
-        
+
         return vector_store
     
     def create_speed_optimized_prompt(self, query_type: str, context: str, question: str) -> str:
@@ -529,23 +539,28 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
 **Answer:**"""
         return prompt
     
-    async def answer_question(self, question: str, vector_store: Any, top_k: int = 5) -> Dict[str, Any]:
+    async def answer_question(self, question: str, vector_store: Any, top_k: int = 3) -> Dict[str, Any]:
         """Answer a single question with balanced speed and quality"""
         start_time = datetime.now()
+        step_times = {}
         
         try:
-            # Classify query type
+            # Step 1: Classify query type
+            t0 = datetime.now()
             query_type = self.query_classifier.classify_query(question)
-            
-            # Retrieve relevant documents (balanced k for quality)
+            step_times['classify_query'] = (datetime.now() - t0).total_seconds()
+
+            # Step 2: Retrieve relevant documents
+            t1 = datetime.now()
             retriever = vector_store.as_retriever(
                 search_type="similarity",
                 search_kwargs={"k": top_k}
             )
-            
             relevant_docs = retriever.get_relevant_documents(question)
-            
-            # Prepare context (always use top 2 relevant chunks for speed and quality)
+            step_times['retrieve_docs'] = (datetime.now() - t1).total_seconds()
+
+            # Step 3: Prepare context and citations
+            t2 = datetime.now()
             context_parts = []
             citations = []
             for i, doc in enumerate(relevant_docs[:2]):
@@ -557,31 +572,43 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
                 context_parts.append(f"[Document {i+1}] {content}")
                 citations.append(f"Source: {source}, Page: {page}")
             context = "\n\n".join(context_parts)
-            
-            # Use quality prompt but with smart optimizations
+            step_times['prepare_context'] = (datetime.now() - t2).total_seconds()
+
+            # Step 4: Prompt creation
+            t3 = datetime.now()
             prompt = self.create_optimized_prompt(query_type, context, question)
-            
-            # Get LLM response
+            step_times['create_prompt'] = (datetime.now() - t3).total_seconds()
+
+            # Step 5: LLM response
+            t4 = datetime.now()
             llm = self.initialize_llm()
             response = llm.invoke(prompt)
             answer = response.content
-            
-            # Extract confidence score (basic implementation)
+            step_times['llm_invoke'] = (datetime.now() - t4).total_seconds()
+
+            # Step 6: Confidence extraction
+            t5 = datetime.now()
             confidence = self._extract_confidence(answer)
-            
-            # Update token usage (estimation)
+            step_times['extract_confidence'] = (datetime.now() - t5).total_seconds()
+
+            # Step 7: Token usage update
+            t6 = datetime.now()
             input_tokens = len(prompt.split())
             output_tokens = len(answer.split())
             self.token_usage["input_tokens"] += input_tokens
             self.token_usage["output_tokens"] += output_tokens
-            
+            step_times['update_tokens'] = (datetime.now() - t6).total_seconds()
+
             processing_time = (datetime.now() - start_time).total_seconds()
-            
+
+            logger.info(f"Step timings: {step_times}")
+
             return {
                 "answer": answer,
                 "confidence": confidence,
                 "citations": citations[:2],  # Limit to top 2 citations for speed
                 "processing_time": processing_time,
+                "step_times": step_times,
                 "query_type": query_type,
                 "context_chunks": len(relevant_docs)
             }
