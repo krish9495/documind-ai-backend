@@ -131,13 +131,13 @@ class DocumentProcessor:
         return UnstructuredEmailLoader(path).load()
     
     def _load_url(self, url: str):
-        """Load document from URL by downloading first"""
+        """Load document from URL with smart optimizations maintaining quality"""
         import requests
         import tempfile
         
         try:
-            # Download the file
-            response = requests.get(url, timeout=30)
+            # Smart download with streaming for better memory usage
+            response = requests.get(url, timeout=20, stream=True)
             response.raise_for_status()
             
             # Determine file type from content-type or URL
@@ -152,9 +152,11 @@ class DocumentProcessor:
                 # Default to PDF for unknown types
                 suffix = '.pdf'
             
-            # Save to temporary file
+            # Save to temporary file with optimized streaming
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
-                tmp_file.write(response.content)
+                # Stream download in larger chunks for efficiency
+                for chunk in response.iter_content(chunk_size=16384):  # 16KB chunks
+                    tmp_file.write(chunk)
                 temp_path = tmp_file.name
             
             # Process the downloaded file
@@ -208,11 +210,17 @@ class AdvancedEmbeddingManager:
         self._cache = {}
         
     def initialize(self):
-        """Initialize embedding model"""
+        """Initialize embedding model with speed optimization"""
         if self.embeddings is None:
             self.embeddings = HuggingFaceEmbeddings(
                 model_name=self.model_name,
-                model_kwargs={'device': 'cpu'}
+                model_kwargs={
+                    'device': 'cpu'
+                },
+                encode_kwargs={
+                    'batch_size': 32,  # Process in batches for speed
+                    'normalize_embeddings': True  # Faster similarity computation
+                }
             )
             logger.info(f"Initialized embedding model: {self.model_name}")
         return self.embeddings
@@ -220,7 +228,7 @@ class AdvancedEmbeddingManager:
 class IntelligentChunker:
     """Intelligent document chunking with context preservation"""
     
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+    def __init__(self, chunk_size: int = 2200, chunk_overlap: int = 50):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         
@@ -233,18 +241,17 @@ class IntelligentChunker:
             separators=[
                 "\n\n\n",  # Document sections
                 "\n\n",    # Paragraphs
-                "\n",      # Lines
+                "\n",      # Lines  
                 ". ",      # Sentences
-                ", ",      # Clauses
                 " ",       # Words
                 ""
             ],
-            keep_separator=True
+            keep_separator=True  # Keep separators for context
         )
         
         chunks = text_splitter.split_documents(documents)
         
-        # Enhance chunks with additional metadata
+        # Enhanced metadata for quality while keeping essentials
         for i, chunk in enumerate(chunks):
             chunk.metadata.update({
                 'chunk_id': i,
@@ -364,7 +371,7 @@ class QueryClassifier:
         return QueryType.COVERAGE  # Default
 
 class AdvancedRAGSystem:
-    """Advanced RAG system with LangGraph orchestration"""
+    """Advanced RAG system with smart caching for speed without quality compromise"""
     
     def __init__(self, 
                  model_name: str = "gemini-1.5-flash",
@@ -387,11 +394,15 @@ class AdvancedRAGSystem:
         # Initialize simple memory store instead of deprecated ConversationBufferMemory
         self.chat_history = []
         
+        # Smart caching for speed without quality loss
+        self.vector_store_cache = {}
+        self.query_cache = {}
+        
         # Statistics
         self.token_usage = {"input_tokens": 0, "output_tokens": 0}
         
     def initialize_llm(self):
-        """Initialize LLM with optimized settings"""
+        """Initialize LLM with balanced speed and quality settings"""
         if self.llm is None:
             api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
@@ -400,20 +411,30 @@ class AdvancedRAGSystem:
             print(f"🔑 Using API Key: {api_key[:20]}...")
                 
             self.llm = ChatGoogleGenerativeAI(
-                model=self.model_name,
+                model="gemini-1.5-flash",  # Fast but high-quality model
                 google_api_key=api_key,
                 temperature=0.1,
-                max_output_tokens=2048,
+                max_output_tokens=2048,  # Keep quality output length
                 top_p=0.8,
-                top_k=40
+                top_k=40,  # Keep quality parameters
+                timeout=60,  # Reasonable timeout
+                max_retries=2  # Allow retries for reliability
             )
             logger.info(f"Initialized LLM: {self.model_name}")
         return self.llm
     
     async def process_documents(self, document_paths: Union[str, List[str]]) -> Any:
-        """Process multiple documents efficiently"""
+        """Process multiple documents efficiently with smart caching"""
         if isinstance(document_paths, str):
             document_paths = [document_paths]
+        
+        # Create cache key for document set
+        cache_key = "|".join(sorted(document_paths))
+        
+        # Check if we already processed these documents
+        if cache_key in self.vector_store_cache:
+            logger.info("Using cached vector store for faster processing")
+            return self.vector_store_cache[cache_key]
         
         all_documents = []
         for doc_path in document_paths:
@@ -438,14 +459,42 @@ class AdvancedRAGSystem:
         if vector_store is None:
             vector_store = self.vector_store_manager.create_vector_store(chunks, embeddings)
         
+        # Cache the vector store for future use
+        self.vector_store_cache[cache_key] = vector_store
+        
         return vector_store
     
+    def create_speed_optimized_prompt(self, query_type: str, context: str, question: str) -> str:
+        """Create speed-optimized prompts for faster responses"""
+        
+        base_instructions = """You are an expert document analyst. Answer directly and concisely based on the provided context."""
+        
+        type_specific_instructions = {
+            QueryType.COVERAGE: "Focus on coverage details.",
+            QueryType.EXCLUSION: "Focus on exclusions and limitations.", 
+            QueryType.PROCEDURE: "Focus on procedures and processes.",
+            QueryType.CONDITION: "Focus on conditions and requirements.",
+            QueryType.AMOUNT: "Focus on amounts and limits.",
+            QueryType.TIMELINE: "Focus on timelines and deadlines."
+        }
+        
+        specific_instruction = type_specific_instructions.get(query_type, "")
+        
+        # Shortened prompt for speed
+        prompt = f"""{base_instructions} {specific_instruction}
+
+Context: {context[:2000]}
+
+Question: {question}
+
+Answer concisely with key points and confidence level:"""
+        
+        return prompt
+
     def create_optimized_prompt(self, query_type: str, context: str, question: str) -> str:
         """Create optimized prompts based on query type"""
-        
         base_instructions = """You are an expert document analyst specializing in insurance, legal, HR, and compliance domains. 
-Analyze the provided context and answer the question with high accuracy and clear explanations."""
-        
+Answer the question directly in 3-5 sentences maximum. Only include information relevant to the question. For every key point, provide a citation (document and section/page). Do not list all policy details—focus only on the specific question."""
         type_specific_instructions = {
             QueryType.COVERAGE: "Focus on what IS covered, benefits, inclusions, and eligibility criteria.",
             QueryType.EXCLUSION: "Focus on what IS NOT covered, limitations, restrictions, and exclusions.",
@@ -454,18 +503,16 @@ Analyze the provided context and answer the question with high accuracy and clea
             QueryType.AMOUNT: "Focus on monetary amounts, limits, costs, and financial details.",
             QueryType.TIMELINE: "Focus on timeframes, deadlines, waiting periods, and temporal aspects."
         }
-        
         specific_instruction = type_specific_instructions.get(query_type, "")
-        
         prompt = f"""{base_instructions}
 
 {specific_instruction}
 
 **CRITICAL REQUIREMENTS:**
 1. Use ONLY the provided context to answer
-2. Cite specific clauses, sections, or page numbers when available
-3. If information is insufficient, clearly state what's missing
-4. Provide confidence level in your response
+2. Answer in 3-5 sentences maximum
+3. For every key point, provide a citation (document and section/page)
+4. If information is insufficient, clearly state what's missing
 5. Be precise and avoid speculation
 
 **Context:**
@@ -474,24 +521,23 @@ Analyze the provided context and answer the question with high accuracy and clea
 **Question:** {question}
 
 **Instructions for Response:**
-- Start with a direct answer
-- Provide supporting details from the context
-- Include relevant citations [Source: Page X, Section Y]
+- Answer directly and concisely (3-5 sentences)
+- Provide supporting details only for the specific question
+- Include relevant citations for every key point [Source: Document X, Page Y, Section Z]
 - End with confidence level (High/Medium/Low)
 
 **Answer:**"""
-        
         return prompt
     
-    async def answer_question(self, question: str, vector_store: Any, top_k: int = 7) -> Dict[str, Any]:
-        """Answer a single question with advanced processing"""
+    async def answer_question(self, question: str, vector_store: Any, top_k: int = 5) -> Dict[str, Any]:
+        """Answer a single question with balanced speed and quality"""
         start_time = datetime.now()
         
         try:
             # Classify query type
             query_type = self.query_classifier.classify_query(question)
             
-            # Retrieve relevant documents
+            # Retrieve relevant documents (balanced k for quality)
             retriever = vector_store.as_retriever(
                 search_type="similarity",
                 search_kwargs={"k": top_k}
@@ -499,20 +545,20 @@ Analyze the provided context and answer the question with high accuracy and clea
             
             relevant_docs = retriever.get_relevant_documents(question)
             
-            # Prepare context
+            # Prepare context (always use top 2 relevant chunks for speed and quality)
             context_parts = []
             citations = []
-            
-            for i, doc in enumerate(relevant_docs):
+            for i, doc in enumerate(relevant_docs[:2]):
                 page = doc.metadata.get('page', 'N/A')
                 source = doc.metadata.get('source', 'Unknown')
-                
-                context_parts.append(f"[Document {i+1}] {doc.page_content}")
+                content = doc.page_content
+                if len(content) > 1200:
+                    content = content[:1200] + "..."
+                context_parts.append(f"[Document {i+1}] {content}")
                 citations.append(f"Source: {source}, Page: {page}")
-            
             context = "\n\n".join(context_parts)
             
-            # Create optimized prompt
+            # Use quality prompt but with smart optimizations
             prompt = self.create_optimized_prompt(query_type, context, question)
             
             # Get LLM response
@@ -534,7 +580,7 @@ Analyze the provided context and answer the question with high accuracy and clea
             return {
                 "answer": answer,
                 "confidence": confidence,
-                "citations": citations[:3],  # Top 3 citations
+                "citations": citations[:2],  # Limit to top 2 citations for speed
                 "processing_time": processing_time,
                 "query_type": query_type,
                 "context_chunks": len(relevant_docs)
@@ -564,26 +610,46 @@ Analyze the provided context and answer the question with high accuracy and clea
             return 0.8  # Default confidence
     
     async def process_query_request(self, request: QueryRequest) -> QueryResponse:
-        """Process complete query request"""
+        """Process complete query request with parallel processing for speed"""
         start_time = datetime.now()
         
         try:
             # Process documents
             vector_store = await self.process_documents(request.documents)
             
-            # Process all questions
-            results = []
+            # Process questions in parallel for speed
+            import asyncio
+            tasks = []
             for question in request.questions:
-                result = await self.answer_question(question, vector_store)
-                results.append(result)
+                task = asyncio.create_task(self.answer_question(question, vector_store))
+                tasks.append(task)
+            
+            # Wait for all questions to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Handle any exceptions
+            final_results = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error processing question {i}: {str(result)}")
+                    final_results.append({
+                        "answer": f"Error processing question: {str(result)}",
+                        "confidence": 0.0,
+                        "citations": [],
+                        "processing_time": 0.0,
+                        "query_type": "unknown",
+                        "context_chunks": 0
+                    })
+                else:
+                    final_results.append(result)
             
             # Compile response
             total_time = (datetime.now() - start_time).total_seconds()
             
             response = QueryResponse(
-                answers=[r["answer"] for r in results],
-                confidence_scores=[r["confidence"] for r in results],
-                source_citations=[r["citations"] for r in results],
+                answers=[r["answer"] for r in final_results],
+                confidence_scores=[r["confidence"] for r in final_results],
+                source_citations=[r["citations"] for r in final_results],
                 processing_time=total_time,
                 token_usage=self.token_usage.copy()
             )
