@@ -7,6 +7,7 @@ import asyncio
 import time
 import uuid
 import os
+import traceback
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 import logging
@@ -197,6 +198,49 @@ class ErrorResponse(BaseModel):
     details: str
     timestamp: str
     session_id: Optional[str] = None
+
+class ProcessingOptions(BaseModel):
+    """Processing configuration options"""
+    chunk_size: int = Field(default=500, ge=100, le=2000, description="Size of text chunks for processing")
+    chunk_overlap: int = Field(default=100, ge=0, le=500, description="Overlap between chunks")
+    top_k_retrieval: int = Field(default=10, ge=1, le=20, description="Number of top chunks to retrieve")
+    include_metadata: bool = Field(default=True, description="Include metadata in responses")
+    optimize_for_speed: bool = Field(default=False, description="Optimize for speed over accuracy")
+    enable_caching: bool = Field(default=True, description="Enable response caching")
+
+class BatchProcessingRequest(BaseModel):
+    """Batch processing request for multiple documents and questions"""
+    documents: Union[str, List[str]] = Field(..., description="Document(s) to process - can be URLs, file paths, or text content")
+    questions: List[str] = Field(..., min_items=1, max_items=50, description="Questions to ask about the documents")
+    document_format: str = Field(default="auto", description="Format of documents: 'pdf', 'text', 'url', or 'auto'")
+    processing_options: ProcessingOptions = Field(default_factory=ProcessingOptions, description="Processing configuration")
+    session_id: Optional[str] = Field(default=None, description="Optional session identifier")
+    
+    @field_validator('questions')
+    @classmethod
+    def validate_questions(cls, v):
+        for question in v:
+            if not question.strip():
+                raise ValueError('Questions cannot be empty')
+        return v
+    
+    @field_validator('documents')
+    @classmethod
+    def validate_documents(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v
+
+class BatchProcessingResponse(BaseModel):
+    """Batch processing response with results for all questions"""
+    session_id: str
+    results: List[DetailedAnswer]
+    processing_summary: Dict[str, Any]
+    total_processing_time: float
+    documents_processed: int
+    questions_processed: int
+    status: str = "success"
+    timestamp: str
 
 # API Endpoints
 
@@ -416,6 +460,121 @@ async def process_query(
             status_code=500,
             detail=ErrorResponse(
                 error="Processing failed",
+                details=str(e),
+                timestamp=datetime.now().isoformat(),
+                session_id=session_id
+            ).dict()
+        )
+
+@app.post("/api/v1/batch", response_model=BatchProcessingResponse)
+async def batch_processing_endpoint(
+    request: BatchProcessingRequest,
+    background_tasks: BackgroundTasks,
+    token: str = Depends(verify_token)
+):
+    """
+    Batch processing endpoint that matches the exact JSON structure you provided
+    Processes documents with configurable options and returns detailed citations
+    """
+    global request_count, total_response_time
+    
+    start_time = time.time()
+    session_id = request.session_id or str(uuid.uuid4())
+    
+    try:
+        logger.info(f"Processing batch request: {session_id}")
+        logger.info(f"Documents: {request.documents}")
+        logger.info(f"Questions: {len(request.questions)}")
+        request_count += 1
+        
+        # Store session
+        active_sessions[session_id] = {
+            "start_time": start_time,
+            "status": "processing",
+            "question_count": len(request.questions),
+            "documents": request.documents
+        }
+        
+        # Convert to internal format
+        query_request = QueryRequest(
+            documents=request.documents,
+            questions=request.questions,
+            document_type=request.document_format,
+            options=request.processing_options.dict()
+        )
+        
+        # Process request with custom options
+        top_k = request.processing_options.top_k_retrieval
+        logger.info(f"Using top_k={top_k}, chunk_size={request.processing_options.chunk_size}")
+        
+        # Configure the RAG system with the provided options
+        rag_system.chunker.chunk_size = request.processing_options.chunk_size
+        rag_system.chunker.chunk_overlap = request.processing_options.chunk_overlap
+        
+        response = await rag_system.process_query_request(query_request, top_k=top_k)
+        
+        # Transform response to match DetailedAnswer format
+        detailed_results = []
+        for i, answer in enumerate(response.answers):
+            detailed_answer = DetailedAnswer(
+                question=request.questions[i],
+                answer=answer,
+                confidence_score=response.confidence_scores[i],
+                query_type=response.query_types[i],
+                source_citations=response.source_citations[i],
+                processing_time=response.processing_times[i],
+                context_chunks_used=len(response.source_citations[i]),
+                metadata={
+                    "question_index": i,
+                    "word_count": len(answer.split()),
+                    "character_count": len(answer)
+                }
+            )
+            detailed_results.append(detailed_answer)
+        
+        processing_time = time.time() - start_time
+        total_response_time += processing_time
+        
+        # Update session
+        active_sessions[session_id]["status"] = "completed"
+        active_sessions[session_id]["processing_time"] = processing_time
+        
+        # Create batch processing response
+        batch_response = BatchProcessingResponse(
+            session_id=session_id,
+            results=detailed_results,
+            processing_summary={
+                "total_questions": len(request.questions),
+                "documents_processed": len(request.documents),
+                "average_confidence": sum(response.confidence_scores) / len(response.confidence_scores),
+                "chunk_size_used": request.processing_options.chunk_size,
+                "top_k_used": top_k,
+                "caching_enabled": request.processing_options.enable_caching
+            },
+            total_processing_time=processing_time,
+            documents_processed=len(request.documents),
+            questions_processed=len(request.questions),
+            timestamp=datetime.now().isoformat()
+        )
+        
+        # Schedule cleanup
+        background_tasks.add_task(cleanup_session, session_id)
+        
+        return batch_response
+        
+    except Exception as e:
+        logger.error(f"Error processing batch request {session_id}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Update session with error
+        if session_id in active_sessions:
+            active_sessions[session_id]["status"] = "error"
+            active_sessions[session_id]["error"] = str(e)
+        
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse(
+                error="Batch processing failed",
                 details=str(e),
                 timestamp=datetime.now().isoformat(),
                 session_id=session_id

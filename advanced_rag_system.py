@@ -129,7 +129,8 @@ class DocumentProcessor:
             doc.metadata.update({
                 'source': path,
                 'document_type': 'pdf',
-                'page_number': i + 1,  # Ensure page numbers start from 1
+                'page': i + 1,  # Ensure page numbers start from 1
+                'page_number': i + 1,  # Keep both for compatibility
                 'total_pages': len(documents)
             })
         
@@ -145,7 +146,8 @@ class DocumentProcessor:
             doc.metadata.update({
                 'source': path,
                 'document_type': 'docx',
-                'page': 1  # DOCX typically doesn't have clear page breaks
+                'page': 1,  # DOCX typically doesn't have clear page breaks
+                'page_number': 1  # Keep both for compatibility
             })
         
         return documents
@@ -310,21 +312,30 @@ class VectorStoreManager:
         self.vector_store = None
         
     def create_vector_store(self, chunks: List[Any], embeddings) -> Any:
-        """Create optimized vector store"""
+        """Create optimized vector store with unique storage"""
         try:
+            # Create a unique identifier for this document set
+            import hashlib
+            content_hash = hashlib.md5(str([doc.metadata.get('source', '') for doc in chunks]).encode()).hexdigest()[:8]
+            
             if self.store_type == "faiss":
+                # Create vector store in memory first
                 self.vector_store = FAISS.from_documents(
                     documents=chunks,
                     embedding=embeddings
                 )
-                # Save FAISS index
-                self.vector_store.save_local(str(self.persist_directory / "faiss_index"))
+                # Save with unique identifier
+                unique_path = self.persist_directory / f"faiss_index_{content_hash}"
+                unique_path.mkdir(exist_ok=True)
+                self.vector_store.save_local(str(unique_path))
+                logger.info(f"Saved FAISS index to {unique_path}")
                 
             elif self.store_type == "chroma":
+                unique_path = self.persist_directory / f"chroma_db_{content_hash}"
                 self.vector_store = Chroma.from_documents(
                     documents=chunks,
                     embedding=embeddings,
-                    persist_directory=str(self.persist_directory / "chroma_db")
+                    persist_directory=str(unique_path)
                 )
                 
             logger.info(f"Created {self.store_type} vector store with {len(chunks)} documents")
@@ -470,22 +481,39 @@ class AdvancedRAGSystem:
         return self.llm
     
     async def process_documents(self, document_paths: Union[str, List[str]]) -> Any:
-        """Process multiple documents efficiently with smart caching and async download"""
+        """Process multiple documents efficiently with proper cache invalidation"""
         if isinstance(document_paths, str):
             document_paths = [document_paths]
 
-        # Create cache key for document set
-        cache_key = "|".join(sorted(document_paths))
+        # Create cache key for document set with file modification times
+        import os
+        cache_components = []
+        for doc_path in sorted(document_paths):
+            if os.path.exists(doc_path):
+                # Include file modification time in cache key for proper invalidation
+                mtime = os.path.getmtime(doc_path)
+                cache_components.append(f"{doc_path}:{mtime}")
+            else:
+                # For URLs or non-existent files, use the path as-is
+                cache_components.append(doc_path)
+        
+        cache_key = "|".join(cache_components)
+        logger.info(f"Cache key for documents: {cache_key}")
 
-        # Check if we already processed these documents
+        # Check if we already processed these exact documents (with same modification times)
         if cache_key in self.vector_store_cache:
             logger.info("Using cached vector store for faster processing")
             return self.vector_store_cache[cache_key]
+
+        # Clear any existing vector store cache for new documents
+        logger.info("Processing new documents - clearing old cache")
+        self.vector_store_cache.clear()
 
         async def process_one(doc_path):
             try:
                 # Always await the async process_document method
                 documents = await self.document_processor.process_document(doc_path)
+                logger.info(f"Processed {doc_path}: {len(documents)} pages loaded")
                 return documents
             except Exception as e:
                 logger.error(f"Failed to process {doc_path}: {str(e)}")
@@ -506,17 +534,18 @@ class AdvancedRAGSystem:
 
         # Create intelligent chunks
         chunks = self.chunker.create_chunks(all_documents)
+        logger.info(f"Created {len(chunks)} chunks from {len(all_documents)} document pages")
 
         # Initialize embeddings
         embeddings = self.embedding_manager.initialize()
 
-        # Try to load existing vector store, create if not found
-        vector_store = self.vector_store_manager.load_vector_store(embeddings)
-        if vector_store is None:
-            vector_store = self.vector_store_manager.create_vector_store(chunks, embeddings)
+        # Create fresh vector store (don't load existing one to avoid cache issues)
+        logger.info("Creating fresh vector store for new documents")
+        vector_store = self.vector_store_manager.create_vector_store(chunks, embeddings)
 
-        # Cache the vector store for future use
+        # Cache the vector store for future use with this exact document set
         self.vector_store_cache[cache_key] = vector_store
+        logger.info(f"Cached vector store for key: {cache_key[:100]}...")
 
         return vector_store
     
@@ -643,22 +672,68 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
                 
                 # Get section/paragraph information from content for better user understanding
                 section_info = ""
-                content_preview = doc.page_content[:300].strip()  # First 300 chars
+                content_preview = doc.page_content[:500].strip()  # First 500 chars for better detection
                 
                 # Try to detect meaningful sections, definitions, or clauses
                 import re
-                # Look for numbered sections, definitions, or headings
+                
+                # Enhanced section patterns for precise citation
                 section_patterns = [
-                    r'^(\d+\.?\s*[A-Za-z][^:\n]{5,50}):',  # "36. Policy Schedule:"
-                    r'^([A-Z][A-Z\s]{10,40}):',            # "POLICY SCHEDULE:"
-                    r'^\s*([A-Z][a-z\s]{10,40})\s*[-:]',   # "Coverage Details -"
+                    # Numbered clauses: "1.", "2.", "3.", etc.
+                    r'(?:^|\n)\s*(\d{1,2}\.)\s*([A-Z][^.\n]{10,80}[.:])',
+                    
+                    # Roman numeral clauses: "i.", "ii.", "iii.", "iv.", "v.", etc.
+                    r'(?:^|\n)\s*((?:i{1,3}v?|iv|v|vi{0,3}|ix|x)\.)\s*([A-Z][^.\n]{10,80}[.:])',
+                    
+                    # Lettered clauses: "a)", "b)", "c)", etc.
+                    r'(?:^|\n)\s*([a-z]\))\s*([A-Z][^.\n]{10,80}[.:])',
+                    
+                    # Policy sections with numbers: "36. Policy Schedule:"
+                    r'^(\d+\.?\s*[A-Za-z][^:\n]{5,50}):',
+                    
+                    # ALL CAPS headers: "POLICY SCHEDULE:"
+                    r'^([A-Z][A-Z\s]{10,40}):',
+                    
+                    # Title case sections: "Coverage Details -"
+                    r'^\s*([A-Z][a-z\s]{10,40})\s*[-:]',
+                    
+                    # Bracketed sections: "(1) Premium", "(a) Coverage"
+                    r'(?:^|\n)\s*(\([0-9a-z]+\))\s*([A-Z][^.\n]{5,60})',
+                    
+                    # Sub-clauses with decimals: "1.1", "1.2", etc.
+                    r'(?:^|\n)\s*(\d{1,2}\.\d{1,2})\s*([A-Z][^.\n]{10,80}[.:])',
                 ]
                 
+                # Try each pattern to find the best match
                 for pattern in section_patterns:
-                    section_match = re.search(pattern, content_preview)
+                    section_match = re.search(pattern, content_preview, re.MULTILINE)
                     if section_match:
-                        section_info = section_match.group(1).strip()
+                        if len(section_match.groups()) >= 2:
+                            # Format: "Clause X: Description"
+                            clause_num = section_match.group(1).strip()
+                            clause_desc = section_match.group(2).strip()
+                            # Truncate description if too long
+                            if len(clause_desc) > 40:
+                                clause_desc = clause_desc[:40] + "..."
+                            section_info = f"Clause {clause_num} {clause_desc}"
+                        else:
+                            section_info = section_match.group(1).strip()
                         break
+                
+                # If no specific clause found, try to find any prominent text
+                if not section_info:
+                    # Look for any numbered or lettered items at the start
+                    simple_patterns = [
+                        r'(?:^|\n)\s*(\d{1,2}\.)\s*([A-Z][a-z]{5,30})',
+                        r'(?:^|\n)\s*([a-z]\))\s*([A-Z][a-z]{5,30})',
+                        r'^([A-Z][A-Z\s]{5,30})',  # Any all-caps text
+                    ]
+                    
+                    for pattern in simple_patterns:
+                        match = re.search(pattern, content_preview, re.MULTILINE)
+                        if match:
+                            section_info = " ".join(match.groups()).strip()
+                            break
                 
                 content = doc.page_content
                 if len(content) > 1200:
