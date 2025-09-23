@@ -127,9 +127,9 @@ class DocumentFormat(str, Enum):
 
 class ProcessingOptions(BaseModel):
     """Advanced processing options"""
-    chunk_size: int = Field(default=1000, ge=500, le=2000)
-    chunk_overlap: int = Field(default=200, ge=50, le=500)
-    top_k_retrieval: int = Field(default=7, ge=3, le=15)
+    chunk_size: int = Field(default=500, ge=200, le=2000)
+    chunk_overlap: int = Field(default=100, ge=50, le=500)
+    top_k_retrieval: int = Field(default=10, ge=3, le=15)
     include_metadata: bool = Field(default=True)
     optimize_for_speed: bool = Field(default=False)
     enable_caching: bool = Field(default=True)
@@ -275,8 +275,9 @@ async def process_hackrx_request(
             options=request.processing_options.dict()
         )
         
-        # Process request
-        response = await rag_system.process_query_request(query_request)
+        # Process request with custom top_k if specified
+        top_k = request.processing_options.top_k_retrieval
+        response = await rag_system.process_query_request(query_request, top_k=top_k)
         
         processing_time = time.time() - start_time
         total_response_time += processing_time
@@ -348,8 +349,9 @@ async def process_query(
             options=request.processing_options.dict()
         )
         
-        # Process request
-        response = await rag_system.process_query_request(query_request)
+        # Process request with custom top_k if specified
+        top_k = request.processing_options.top_k_retrieval
+        response = await rag_system.process_query_request(query_request, top_k=top_k)
         
         # Create detailed answers
         detailed_answers = []
@@ -361,7 +363,7 @@ async def process_query(
                 query_type="auto-detected",
                 source_citations=response.source_citations[i],
                 processing_time=response.processing_time / len(request.questions),
-                context_chunks_used=7,
+                context_chunks_used=top_k,
                 metadata={
                     "question_index": i,
                     "word_count": len(response.answers[i].split()),

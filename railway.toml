@@ -10,6 +10,7 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
 [env]
+PORT = "8000"
 HOST = "0.0.0.0"
 RELOAD = "false"
 PYTHONUNBUFFERED = "1"

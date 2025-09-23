@@ -16,6 +16,7 @@ import json
 import asyncio
 import requests
 import tempfile
+import traceback
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 from pathlib import Path
@@ -119,12 +120,35 @@ class DocumentProcessor:
         return type_mapping.get(suffix, DocumentType.PDF)
     
     def _load_pdf(self, path: str):
-        """Load PDF document"""
-        return PyPDFLoader(path).load()
+        """Load PDF document with enhanced metadata"""
+        loader = PyPDFLoader(path)
+        documents = loader.load()
+        
+        # Enhance metadata for each page
+        for i, doc in enumerate(documents):
+            doc.metadata.update({
+                'source': path,
+                'document_type': 'pdf',
+                'page_number': i + 1,  # Ensure page numbers start from 1
+                'total_pages': len(documents)
+            })
+        
+        return documents
     
     def _load_docx(self, path: str):
-        """Load DOCX document"""
-        return Docx2txtLoader(path).load()
+        """Load DOCX document with enhanced metadata"""
+        loader = Docx2txtLoader(path)
+        documents = loader.load()
+        
+        # Enhance metadata
+        for doc in documents:
+            doc.metadata.update({
+                'source': path,
+                'document_type': 'docx',
+                'page': 1  # DOCX typically doesn't have clear page breaks
+            })
+        
+        return documents
     
     def _load_email(self, path: str):
         """Load email document"""
@@ -228,7 +252,7 @@ class AdvancedEmbeddingManager:
 class IntelligentChunker:
     """Intelligent document chunking with context preservation"""
     
-    def __init__(self, chunk_size: int = 3500, chunk_overlap: int = 50):
+    def __init__(self, chunk_size: int = 1200, chunk_overlap: int = 150):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         
@@ -251,15 +275,29 @@ class IntelligentChunker:
         
         chunks = text_splitter.split_documents(documents)
         
-        # Enhanced metadata for quality while keeping essentials
+        # Enhanced metadata for quality while preserving original metadata
         for i, chunk in enumerate(chunks):
+            # Preserve original metadata (page, source, etc.)
+            original_metadata = chunk.metadata.copy()
+            
+            # Add enhanced metadata without overwriting original
             chunk.metadata.update({
                 'chunk_id': i,
                 'chunk_size': len(chunk.page_content),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now().isoformat(),
+                # Preserve original metadata
+                **original_metadata
             })
             
-        logger.info(f"Created {len(chunks)} intelligent chunks")
+            # Ensure source is set if not present
+            if 'source' not in chunk.metadata or not chunk.metadata['source']:
+                # Extract filename from document source
+                for doc in documents:
+                    if hasattr(doc, 'metadata') and 'source' in doc.metadata:
+                        chunk.metadata['source'] = doc.metadata['source']
+                        break
+            
+        logger.info(f"Created {len(chunks)} intelligent chunks with preserved metadata")
         return chunks
 
 class VectorStoreManager:
@@ -302,11 +340,21 @@ class VectorStoreManager:
             if self.store_type == "faiss":
                 index_path = self.persist_directory / "faiss_index"
                 if index_path.exists():
-                    self.vector_store = FAISS.load_local(
-                        str(index_path), 
-                        embeddings,
-                        allow_dangerous_deserialization=True
-                    )
+                    # Check if the existing index is compatible with current embeddings
+                    try:
+                        self.vector_store = FAISS.load_local(
+                            str(index_path), 
+                            embeddings,
+                            allow_dangerous_deserialization=True
+                        )
+                        logger.info(f"Loaded existing {self.store_type} vector store")
+                    except AssertionError as e:
+                        logger.warning(f"FAISS dimension mismatch - recreating vector store: {str(e)}")
+                        # Remove the incompatible index
+                        import shutil
+                        if index_path.exists():
+                            shutil.rmtree(str(index_path))
+                        return None
                     
             elif self.store_type == "chroma":
                 db_path = self.persist_directory / "chroma_db"
@@ -315,10 +363,8 @@ class VectorStoreManager:
                         persist_directory=str(db_path),
                         embedding_function=embeddings
                     )
+                    logger.info(f"Loaded existing {self.store_type} vector store")
                     
-            if self.vector_store:
-                logger.info(f"Loaded existing {self.store_type} vector store")
-                
             return self.vector_store
             
         except Exception as e:
@@ -533,13 +579,13 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
 **Instructions for Response:**
 - Answer directly and concisely (3-5 sentences)
 - Provide supporting details only for the specific question
-- Include relevant citations for every key point [Source: Document X, Page Y, Section Z]
+- Reference chunks by their page numbers (e.g., "as stated on Page 9" or "according to Page 33")
 - End with confidence level (High/Medium/Low)
 
 **Answer:**"""
         return prompt
     
-    async def answer_question(self, question: str, vector_store: Any, top_k: int = 3) -> Dict[str, Any]:
+    async def answer_question(self, question: str, vector_store: Any, top_k: int = 5) -> Dict[str, Any]:
         """Answer a single question with balanced speed and quality"""
         start_time = datetime.now()
         step_times = {}
@@ -556,21 +602,84 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
                 search_type="similarity",
                 search_kwargs={"k": top_k}
             )
-            relevant_docs = retriever.get_relevant_documents(question)
+            relevant_docs = retriever.invoke(question)
             step_times['retrieve_docs'] = (datetime.now() - t1).total_seconds()
 
-            # Step 3: Prepare context and citations
+            # Step 3: Prepare context and citations with improved accuracy
             t2 = datetime.now()
             context_parts = []
             citations = []
+            
+            # Debug: Log metadata for troubleshooting
+            logger.info(f"Retrieved {len(relevant_docs)} documents for citation processing")
+            
             for i, doc in enumerate(relevant_docs[:2]):
-                page = doc.metadata.get('page', 'N/A')
+                # Debug: Log available metadata
+                logger.info(f"Document {i+1} metadata: {doc.metadata}")
+                
+                # Get page information more accurately
+                page = doc.metadata.get('page', None)
+                if page is None:
+                    # Try alternative page keys
+                    page = doc.metadata.get('page_number', 
+                           doc.metadata.get('page_label', 'N/A'))
+                
+                # Handle page 0 (often cover page or metadata issue)
+                if page == 0:
+                    page = "Cover Page"
+                
+                # Get source information
                 source = doc.metadata.get('source', 'Unknown')
+                if source == 'Unknown' or not source:
+                    # Try to extract filename if source is missing
+                    chunk_id = doc.metadata.get('chunk_id', 'N/A')
+                    source = f"Document_{chunk_id}"
+                
+                # Clean up source path to show just filename
+                if source != 'Unknown' and '\\' in source:
+                    source = source.split('\\')[-1]  # Get just the filename
+                elif source != 'Unknown' and '/' in source:
+                    source = source.split('/')[-1]   # Handle forward slashes too
+                
+                # Get section/paragraph information from content for better user understanding
+                section_info = ""
+                content_preview = doc.page_content[:300].strip()  # First 300 chars
+                
+                # Try to detect meaningful sections, definitions, or clauses
+                import re
+                # Look for numbered sections, definitions, or headings
+                section_patterns = [
+                    r'^(\d+\.?\s*[A-Za-z][^:\n]{5,50}):',  # "36. Policy Schedule:"
+                    r'^([A-Z][A-Z\s]{10,40}):',            # "POLICY SCHEDULE:"
+                    r'^\s*([A-Z][a-z\s]{10,40})\s*[-:]',   # "Coverage Details -"
+                ]
+                
+                for pattern in section_patterns:
+                    section_match = re.search(pattern, content_preview)
+                    if section_match:
+                        section_info = section_match.group(1).strip()
+                        break
+                
                 content = doc.page_content
                 if len(content) > 1200:
                     content = content[:1200] + "..."
-                context_parts.append(f"[Document {i+1}] {content}")
-                citations.append(f"Source: {source}, Page: {page}")
+                    
+                # Just provide the content without confusing chunk labels
+                context_parts.append(content)
+                
+                # Create user-friendly citation with meaningful section if found
+                citation_parts = [f"Source: {source}"]
+                if str(page) != 'N/A' and page is not None:
+                    citation_parts.append(f"Page: {page}")
+                if section_info:
+                    citation_parts.append(f"Section: {section_info}")
+                    
+                final_citation = ", ".join(citation_parts)
+                citations.append(final_citation)
+                
+                # Debug: Log final citation
+                logger.info(f"Generated citation: {final_citation}")
+                
             context = "\n\n".join(context_parts)
             step_times['prepare_context'] = (datetime.now() - t2).total_seconds()
 
@@ -582,8 +691,12 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
             # Step 5: LLM response
             t4 = datetime.now()
             llm = self.initialize_llm()
-            response = llm.invoke(prompt)
-            answer = response.content
+            try:
+                response = llm.invoke(prompt)
+                answer = response.content
+            except Exception as llm_error:
+                logger.error(f"LLM invoke error: {type(llm_error).__name__}: {str(llm_error)}")
+                raise llm_error
             step_times['llm_invoke'] = (datetime.now() - t4).total_seconds()
 
             # Step 6: Confidence extraction
@@ -614,9 +727,11 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
             }
             
         except Exception as e:
-            logger.error(f"Error answering question: {str(e)}")
+            error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else f"{type(e).__name__} (no message)"
+            logger.error(f"Error answering question: {error_msg}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return {
-                "answer": f"Error processing question: {str(e)}",
+                "answer": f"Error processing question: {error_msg}",
                 "confidence": 0.0,
                 "citations": [],
                 "processing_time": (datetime.now() - start_time).total_seconds(),
@@ -636,7 +751,7 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
         else:
             return 0.8  # Default confidence
     
-    async def process_query_request(self, request: QueryRequest) -> QueryResponse:
+    async def process_query_request(self, request: QueryRequest, top_k: int = 10) -> QueryResponse:
         """Process complete query request with parallel processing for speed"""
         start_time = datetime.now()
         
@@ -648,7 +763,7 @@ Answer the question directly in 3-5 sentences maximum. Only include information 
             import asyncio
             tasks = []
             for question in request.questions:
-                task = asyncio.create_task(self.answer_question(question, vector_store))
+                task = asyncio.create_task(self.answer_question(question, vector_store, top_k=top_k))
                 tasks.append(task)
             
             # Wait for all questions to complete
