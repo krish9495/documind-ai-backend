@@ -431,7 +431,7 @@ class AdvancedRAGSystem:
     """Advanced RAG system with smart caching for speed without quality compromise"""
     
     def __init__(self, 
-                 model_name: str = "gemini-1.5-flash",
+                 model_name: str = "gemini-2.5-flash-lite",
                  vector_store_type: str = "faiss",
                  embedding_model: str = "all-MiniLM-L6-v2"):
         
@@ -468,7 +468,7 @@ class AdvancedRAGSystem:
             print(f"🔑 Using API Key: {api_key[:20]}...")
                 
             self.llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",  # Fast but high-quality model
+                model="gemini-2.5-flash-lite",  # Fast but high-quality model
                 google_api_key=api_key,
                 temperature=0.1,
                 max_output_tokens=1024,  # Lower output tokens for faster response

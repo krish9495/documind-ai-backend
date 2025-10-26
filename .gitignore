@@ -5,3 +5,15 @@ uploads/
 vector_store/
 .venv/
 .vercel
+
+# Secrets and env
+.env
+# Build / python
+*.pyc
+__pycache__/
+# Vector stores and large indices
+vector_store/
+# Uploaded or test PDFs
+uploads/
+*.pdf
+

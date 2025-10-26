@@ -104,7 +104,8 @@ app.add_middleware(
 security = HTTPBearer()
 VALID_TOKENS = {
     "hackrx-2024-bajaj-finserv": "hackrx_token",
-    "03e834fbe3091bbd057af6a74fc056c509bf3a5a5a730b9e628d357d675b22a5": "team_token"
+    "03e834fbe3091bbd057af6a74fc056c509bf3a5a5a730b9e628d357d675b22a5": "team_token",
+    "9495":"custom"
 }
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
