@@ -25,19 +25,38 @@ PyPDF2>=3.0.0,<4.0.0
 pypdf>=3.0.0,<4.0.0
 python-docx>=0.8.11,<1.0.0
 
-# Vector stores
+pip-requirements
+# DocuMind AI - Backend Dependencies Aligned With Code Imports
+
+# FastAPI stack
+fastapi==0.110.2
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+pydantic>=2.6.0,<3.0.0
+python-dotenv==1.0.1
+requests==2.32.3
+psutil==5.9.8
+
+# Data + analytics
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0,<3.0.0
+
+# LangChain & orchestration
+langchain==0.2.7
+langchain-community==0.2.7
+langchain-google-genai==0.0.11
+langgraph==0.0.52
+
+# Embeddings & vector stores
+sentence-transformers==2.7.0
+huggingface-hub>=0.23.0,<1.0.0
 faiss-cpu==1.7.4
+chromadb==0.5.3
 
-# Text processing
-tiktoken>=0.5.0,<0.6.0
+# Document loaders & parsing
+pypdf==4.2.0
+docx2txt==0.8
+unstructured==0.15.12
 
-# Utilities
-tqdm>=4.66.0,<5.0.0
-typing-extensions>=4.8.0,<5.0.0
-
-# System monitoring
-psutil>=5.9.0,<6.0.0
-
-# Transformers and sentence embeddings (will install CPU-only torch)
-transformers>=4.30.0,<5.0.0
-sentence-transformers>=2.2.2,<2.5.0
+# Google Generative AI bridge
+google-generativeai==0.6.0
